@@ -1,0 +1,20 @@
+<?xml version='1.0'?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="mir_ur">
+
+  <xacro:include filename="$(find ur_description)/urdf/inc/ur5e_macro.xacro" />
+
+  <xacro:include filename="$(find mir_description)/urdf/include/mir_100_v1.urdf.xacro" />
+  <xacro:include filename="$(find mir_description)/urdf/include/common.gazebo.xacro" />
+  <xacro:mir_100 prefix="" />
+  <xacro:controller_plugin_gazebo robot_namespace="" />
+  <xacro:ur5e_robot
+    prefix="ur_" transmission_hw_interface="hardware_interface/PositionJointInterface"
+  /> 
+  
+  <joint name="mir_ur_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="ur_base_link" />
+    <origin xyz="0 0 0.352" rpy="0 0 0" />
+  </joint> 
+ 
+</robot>

@@ -1,0 +1,127 @@
+<launch>
+
+  <!-- By default, we do not start a database (it can be large) -->
+  <arg name="db" default="false" />
+  <!-- Allow user to specify database location -->
+  <arg name="db_path" default="$(find ur_mir_moveit_config)/default_warehouse_mongo_db" />
+
+  <!-- By default, we are not in debug mode -->
+  <arg name="debug" default="false" />
+
+  <!-- By default, we won't load or override the robot_description -->
+  <arg name="load_robot_description" default="true"/>
+
+  <arg name="tf_prefix" default="" doc="tf_prefix to be used by gazebo plugins and in the robot's urdf etc." />
+  <arg name="prepend_prefix_to_laser_frame" default="false" doc="Set this to 'true' if you don't start the spawn_model node inside a namespace."/>
+
+  <arg name="prefix" value="$(arg tf_prefix)/" if="$(eval tf_prefix != '')" /> <!-- $(arg prefix) is used in all the config files! TODO: For multiple robots, create groups when loading the parameters to overwrite the arg? -->
+  <arg name="prefix" value=""                  unless="$(eval tf_prefix != '')" />
+  <!--
+  By default, hide joint_state_publisher's GUI
+
+  MoveIt!'s "demo" mode replaces the real robot driver with the joint_state_publisher.
+  The latter one maintains and publishes the current joint configuration of the simulated robot.
+  It also provides a GUI to move the simulated robot around "manually".
+  This corresponds to moving around the real robot without the use of MoveIt.
+  -->
+  <arg name="use_gui" default="false" />
+  <rosparam file="$(find ur_mir_moveit_config)/config/ros_controllers.yaml" command="load"/>
+  <rosparam file="$(find mir_description)/config/diffdrive_controller.yaml" command="load" subst_value="true" />
+  <!-- Gazebo specific options -->
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <!-- By default, use the urdf location provided from the package -->
+  <arg name="urdf_path" default="$(find ur_mir_description)/urdf/ur_mir.urdf.xacro"/>
+
+  <remap from="mobile_base_controller/cmd_vel" to="cmd_vel" />
+  <remap from="mobile_base_controller/odom"    to="odom" />
+  <!-- launch the gazebo simulator and spawn the robot -->
+  <include file="$(find ur_mir_moveit_config)/launch/gazebo.launch" >
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="urdf_path" value="$(arg urdf_path)"/>
+    <arg name="world_name" value="/home/axalta/lab.world"/>
+  </include>
+
+  <!-- If needed, broadcast static tf for robot root -->
+  
+
+  <!-- We do not have a robot connected, so publish fake joint states -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" unless="$(arg use_gui)">
+    <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
+    <rosparam param="source_list">[/joint_states]</rosparam>
+  </node>
+  <node name="joint_state_publisher" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" if="$(arg use_gui)">
+    <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
+    <rosparam param="source_list">[/joint_states]</rosparam>
+  </node>
+
+  <!-- Given the published joint states, publish tf for the robot links -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" respawn="true" output="screen" />
+
+  <!-- Run the main MoveIt! executable without trajectory execution (we do not have controllers configured by default) -->
+  <include file="$(find ur_mir_moveit_config)/launch/moveit_planning_execution.launch">
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="load_robot_description" value="$(arg load_robot_description)"/>
+  </include>
+
+
+
+  <!-- If database loading was enabled, start mongodb as well -->
+  <include file="$(find ur_mir_moveit_config)/launch/default_warehouse_db.launch" if="$(arg db)">
+    <arg name="moveit_warehouse_database_path" value="$(arg db_path)"/>
+  </include>
+
+  <!-- Start the controllers -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" output="screen"
+    args="joint_state_controller mobile_base_controller"/>
+
+  <!-- EKF -->
+  <include file="$(find mir_gazebo)/launch/includes/ekf.launch.xml">
+      <arg name="tf_prefix" value="$(arg prefix)" />
+  </include>
+  
+  <!-- Load teleop
+  <node name="rqt_robot_steering" pkg="rqt_robot_steering" type="rqt_robot_steering">
+    <param name="default_topic" value="mobile_base_controller/cmd_vel"/>
+    <param name="default_vx_max" value="1.0" />
+    <param name="default_vx_min" value="-1.0" />
+    <param name="default_vw_max" value="1.5" />
+    <param name="default_vw_min" value="-1.5" />
+  </node> -->
+
+  <include file="$(find mir_navigation)/launch/amcl.launch" >
+    <arg name="initial_pose_x" value="10.0"/>
+    <arg name="initial_pose_y" value="10.0"/>
+  </include>
+
+  <include file="$(find mir_navigation)/launch/start_planner.launch" >
+    <arg name="map_file" value="$(find mir_gazebo)/maps/lab_map.yaml"/>
+  </include>
+  <!-- Run Rviz and load the default config to see the state of the move_group node
+  <include file="$(find ur_mir_moveit_config)/launch/moveit_rviz.launch">
+    <arg name="rviz_config" value="$(find mir_navigation)/launch/navigation.rviz"/>
+    <arg name="debug" value="$(arg debug)"/>
+  </include> -->
+
+  <!-- create combined scan topic (like on real MiR) -->
+  <node pkg="topic_tools" type="relay" name="b_scan_relay" args="b_scan scan"/>
+  <node pkg="topic_tools" type="relay" name="f_scan_relay" args="f_scan scan"/>
+
+  <node name="b_rep117_laser_filter" pkg="mir_driver" type="rep117_filter.py" output="screen">
+    <remap from="scan" to="b_scan" />
+    <remap from="scan_filtered" to="b_scan_rep117" />
+  </node>
+
+  <node name="f_rep117_laser_filter" pkg="mir_driver" type="rep117_filter.py" output="screen">
+    <remap from="scan" to="f_scan" />
+    <remap from="scan_filtered" to="f_scan_rep117" />
+  </node>
+
+  <node pkg="move_arm" name="move_home.py" type="move_home.py" output="screen"> 
+  </node>
+
+  <node pkg="move_arm" name="test.py" type="test.py" output="screen"> 
+  </node>
+
+</launch>
